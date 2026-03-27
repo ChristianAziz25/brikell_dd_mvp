@@ -3,9 +3,10 @@ import os
 import sqlite3
 from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
+from app.agents.parser import parse_document
 from app.database import get_db
 from app.documents.schemas import DocumentResponse
 from app.documents.service import (
@@ -27,6 +28,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".csv", ".docx", ".xlsx", ".xls", ".txt"}
 )
 async def upload_documents(
     project_id: str,
+    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     db: sqlite3.Connection = Depends(get_db),
 ):
@@ -46,6 +48,9 @@ async def upload_documents(
     for file_bytes, original_filename, file_type, file_size_bytes in file_data:
         doc = save_document(
             project_id, file_bytes, original_filename, file_type, file_size_bytes, db
+        )
+        background_tasks.add_task(
+            parse_document, project_id, doc.id, doc.vault_path, file_type
         )
         results.append(doc)
     return results

@@ -12,7 +12,7 @@ function Layout() {
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       <Sidebar />
-      <main style={{ flex: 1, overflowY: 'auto', padding: 24, background: '#F5F5F5' }}>
+      <main style={{ flex: 1, overflowY: 'auto', padding: 24, background: '#FFFFFF' }}>
         <Routes>
           <Route path="/" element={<Navigate to="/projects" replace />} />
           <Route path="/projects" element={<ProjectList />} />

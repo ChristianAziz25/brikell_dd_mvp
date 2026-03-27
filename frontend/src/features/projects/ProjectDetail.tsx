@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, NavLink, Outlet, useOutletContext } from 'react-router-dom';
 import { getProject } from '../../api/client';
+import WorkflowStepper from '../../components/WorkflowStepper';
 
 interface Project {
   id: string;
@@ -85,6 +86,9 @@ export default function ProjectDetail() {
         </div>
         {project.address && <div style={{ color: '#666', fontSize: 15, marginTop: 4 }}>{project.address}</div>}
       </div>
+
+      {/* Workflow stepper */}
+      <WorkflowStepper status={project.status} />
 
       {/* Tab bar */}
       <nav style={{ display: 'flex', gap: 0, borderBottom: '2px solid #E0E0E0', marginBottom: 24 }}>
