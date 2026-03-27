@@ -17,7 +17,7 @@ from app.documents.service import (
 
 router = APIRouter(tags=["documents"])
 
-ALLOWED_EXTENSIONS = {".pdf", ".csv", ".docx", ".xlsx", ".txt"}
+ALLOWED_EXTENSIONS = {".pdf", ".csv", ".docx", ".xlsx", ".xls", ".txt"}
 
 
 @router.post(

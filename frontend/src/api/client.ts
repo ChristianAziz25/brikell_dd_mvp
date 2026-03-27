@@ -37,3 +37,17 @@ export function deleteProject(id: string) {
     method: 'DELETE',
   });
 }
+
+export function getDocuments(projectId: string) {
+  return request(`/projects/${projectId}/documents`);
+}
+
+export function deleteDocument(documentId: string) {
+  return request(`/documents/${documentId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function downloadDocumentUrl(documentId: string) {
+  return `${BASE}/documents/${documentId}/download`;
+}
