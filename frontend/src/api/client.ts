@@ -51,3 +51,15 @@ export function deleteDocument(documentId: string) {
 export function downloadDocumentUrl(documentId: string) {
   return `${BASE}/documents/${documentId}/download`;
 }
+
+export function getInputs(projectId: string) {
+  return request(`/projects/${projectId}/inputs`);
+}
+
+export function saveInput(projectId: string, inputType: string, data: Record<string, unknown>) {
+  return request(`/projects/${projectId}/inputs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input_type: inputType, data }),
+  });
+}

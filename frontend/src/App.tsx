@@ -4,6 +4,7 @@ import ProjectList from './features/projects/ProjectList';
 import ProjectCreate from './features/projects/ProjectCreate';
 import ProjectDetail, { OverviewTab, PlaceholderTab } from './features/projects/ProjectDetail';
 import DocumentsTab from './features/workflow/DocumentsTab';
+import InputsTab from './features/workflow/InputsTab';
 import VaultView from './features/vault/VaultView';
 import AIAssistant from './features/chat/AIAssistant';
 
@@ -20,7 +21,7 @@ function Layout() {
             <Route index element={<Navigate to="overview" replace />} />
             <Route path="overview" element={<OverviewTab />} />
             <Route path="documents" element={<DocumentsTab />} />
-            <Route path="inputs" element={<PlaceholderTab />} />
+            <Route path="inputs" element={<InputsTab />} />
             <Route path="modules" element={<PlaceholderTab />} />
             <Route path="review" element={<PlaceholderTab />} />
             <Route path="report" element={<PlaceholderTab />} />
