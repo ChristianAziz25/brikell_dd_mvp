@@ -1,91 +1,68 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { getProjects } from '../../api/client';
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { getProjects } from "@/api/client";
+import { Plus, Building2 } from "lucide-react";
 
-interface Project {
-  id: string;
-  property_name: string;
-  address?: string;
-  status: string;
-  acquisition_price?: number;
-  created_at: string;
-}
-
-const statusColors: Record<string, { bg: string; text: string }> = {
-  draft: { bg: '#E0E0E0', text: '#555' },
-  processing: { bg: '#FFF3CD', text: '#856404' },
-  review: { bg: '#CCE5FF', text: '#004085' },
-  completed: { bg: '#D4EDDA', text: '#155724' },
-  error: { bg: '#F8D7DA', text: '#721C24' },
+const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
+  draft:     { bg: "#f3f4f6", text: "#6b7280" },
+  running:   { bg: "#f3f4f6", text: "#374151" },
+  review:    { bg: "#f3f4f6", text: "#374151" },
+  completed: { bg: "#111827", text: "#ffffff" },
+  error:     { bg: "#fef2f2", text: "#ef4444" },
 };
 
-function formatDKK(amount: number): string {
-  return 'DKK ' + amount.toLocaleString('da-DK');
-}
-
 export default function ProjectList() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    getProjects()
-      .then((data) => setProjects(data))
-      .catch(() => setProjects([]))
-      .finally(() => setLoading(false));
+    getProjects().then(setProjects).finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 80 }}>
-        <div style={spinnerStyle} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 256 }}>
+        <div className="animate-spin rounded-full h-6 w-6 border-2 border-gray-200 border-t-gray-800" />
       </div>
     );
   }
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ margin: 0, color: '#1A2B3C', fontSize: 28 }}>Workflows</h1>
-        <button style={newProjectBtn} onClick={() => navigate('/projects/new')}>
-          + New Project
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 500 }}>Workflows</h2>
+        <button
+          onClick={() => navigate("/new")}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", background: "var(--color-text-primary)", color: "var(--color-background-primary)", border: "none", borderRadius: "var(--border-radius-md)", fontSize: 13, cursor: "pointer" }}
+        >
+          <Plus size={15} />
+          New assignment
         </button>
       </div>
 
       {projects.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '80px 0', color: '#888' }}>
-          <p style={{ fontSize: 18, marginBottom: 16 }}>No projects yet</p>
-          <button style={newProjectBtn} onClick={() => navigate('/projects/new')}>
-            Create your first project
-          </button>
+        <div style={{ textAlign: "center", padding: "64px 0", color: "var(--color-text-tertiary)" }}>
+          <Building2 size={40} style={{ margin: "0 auto 12px", opacity: 0.4 }} />
+          <p style={{ fontSize: 14 }}>No assignments yet</p>
+          <p style={{ fontSize: 12, marginTop: 4 }}>Create your first due diligence assignment</p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 20 }}>
-          {projects.map((p) => {
-            const colors = statusColors[p.status] ?? statusColors.draft;
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
+          {projects.map(p => {
+            const sc = STATUS_COLORS[p.status] || STATUS_COLORS.draft;
             return (
-              <div key={p.id} style={cardStyle}>
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
-                    <span style={{ fontWeight: 700, fontSize: 17, color: '#1A2B3C' }}>{p.property_name}</span>
-                    <span style={{ ...badgeStyle, background: colors.bg, color: colors.text }}>{p.status}</span>
-                  </div>
-                  {p.address && <div style={{ color: '#666', fontSize: 14 }}>{p.address}</div>}
+              <div
+                key={p.id}
+                onClick={() => navigate(`/projects/${p.id}`)}
+                style={{ background: "var(--color-background-primary)", borderRadius: "var(--border-radius-lg)", border: "0.5px solid var(--color-border-tertiary)", padding: "18px 20px", cursor: "pointer" }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)", flex: 1, marginRight: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.address || p.name}</div>
+                  <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: sc.bg, color: sc.text, flexShrink: 0 }}>{p.status}</span>
                 </div>
-                {p.acquisition_price != null && (
-                  <div style={{ fontSize: 15, fontWeight: 600, color: '#1A2B3C', marginBottom: 4 }}>
-                    {formatDKK(p.acquisition_price)}
-                  </div>
-                )}
-                <div style={{ fontSize: 13, color: '#999', marginBottom: 12 }}>
-                  Created {new Date(p.created_at).toLocaleDateString('da-DK')}
-                </div>
-                <button
-                  style={{ ...openBtn }}
-                  onClick={() => navigate(`/projects/${p.id}`)}
-                >
-                  Open
-                </button>
+                {p.address && p.name !== p.address && <p style={{ fontSize: 12, color: "var(--color-text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</p>}
+                <p style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 10 }}>{new Date(p.created_at).toLocaleDateString("da-DK")}</p>
               </div>
             );
           })}
@@ -94,53 +71,3 @@ export default function ProjectList() {
     </div>
   );
 }
-
-const newProjectBtn: React.CSSProperties = {
-  background: '#C9A84C',
-  color: '#fff',
-  border: 'none',
-  borderRadius: 6,
-  padding: '10px 20px',
-  fontSize: 15,
-  fontWeight: 600,
-  cursor: 'pointer',
-};
-
-const cardStyle: React.CSSProperties = {
-  background: '#fff',
-  border: '1px solid #E0E0E0',
-  borderRadius: 10,
-  padding: 20,
-  display: 'flex',
-  flexDirection: 'column',
-};
-
-const badgeStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 600,
-  padding: '3px 10px',
-  borderRadius: 12,
-  textTransform: 'capitalize',
-};
-
-const openBtn: React.CSSProperties = {
-  marginTop: 'auto',
-  background: 'transparent',
-  color: '#C9A84C',
-  border: '1px solid #C9A84C',
-  borderRadius: 6,
-  padding: '6px 16px',
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: 'pointer',
-  alignSelf: 'flex-start',
-};
-
-const spinnerStyle: React.CSSProperties = {
-  width: 36,
-  height: 36,
-  border: '4px solid #E0E0E0',
-  borderTopColor: '#C9A84C',
-  borderRadius: '50%',
-  animation: 'spin 0.8s linear infinite',
-};

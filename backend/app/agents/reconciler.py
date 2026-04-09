@@ -1,197 +1,121 @@
+"""Data reconciler — merges user inputs, document extracts, and AI estimates.
+
+Three-tier priority: User Input > Extracted Data > AI Estimated.
+"""
+
 import json
-import logging
 import sqlite3
-import uuid
-from typing import Literal, Optional, Union
+from typing import Optional
 
 from pydantic import BaseModel
 
-from app.agents.llm_client import llm
-from app.config import settings
+from .llm_client import LLMClient
+from ..config import settings
 
-logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
 
 class FieldValue(BaseModel):
-    value: Union[str, float, int, None]
-    source: Literal["user_input", "extracted", "ai_estimated"]
-    confidence: float
-    reasoning: Optional[str] = None
+    value: Optional[str] = None
+    source: str  # user_input, extracted, ai_estimated
+    confidence: float  # 0.0 - 1.0
+    reasoning: str
 
 
 class ReconciliationResult(BaseModel):
-    address: FieldValue
-    acquisition_price: FieldValue
-    total_gba_sqm: FieldValue
-    unit_count: FieldValue
-    build_year: FieldValue
-    energy_label: FieldValue
-    heating_source: FieldValue
-    lokalplan_ref: FieldValue
-    bebyggelsesprocent_permitted: FieldValue
-    max_etager: FieldValue
-    formaal: FieldValue
-    current_passing_rent: FieldValue
-    market_rent_per_sqm: FieldValue
-    vacancy_rate_pct: FieldValue
-    exit_yield_pct: FieldValue
-    ltv_pct: FieldValue
-    interest_rate_pct: FieldValue
-    opex_total: FieldValue
-    strategic_category: FieldValue
-    lejelov_classification: FieldValue
-    v1_v2_status: FieldValue
-    restrictions_notes: FieldValue
+    address: Optional[FieldValue] = None
+    acquisition_price: Optional[FieldValue] = None
+    total_gba_sqm: Optional[FieldValue] = None
+    unit_count: Optional[FieldValue] = None
+    build_year: Optional[FieldValue] = None
+    energy_label: Optional[FieldValue] = None
+    heating_source: Optional[FieldValue] = None
+    lokalplan_ref: Optional[FieldValue] = None
+    bebyggelsesprocent: Optional[FieldValue] = None
+    max_etager: Optional[FieldValue] = None
+    formaal: Optional[FieldValue] = None
+    current_passing_rent: Optional[FieldValue] = None
+    market_rent_per_sqm: Optional[FieldValue] = None
+    vacancy_pct: Optional[FieldValue] = None
+    exit_yield_pct: Optional[FieldValue] = None
+    ltv_pct: Optional[FieldValue] = None
+    interest_rate_pct: Optional[FieldValue] = None
+    opex_total: Optional[FieldValue] = None
+    strategic_category: Optional[FieldValue] = None
+    lejelov_classification: Optional[FieldValue] = None
+    v1_v2_status: Optional[FieldValue] = None
+    restrictions: Optional[FieldValue] = None
 
 
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
+SYSTEM_PROMPT = """You are a real estate data reconciler for Danish commercial properties.
 
-def _get_db() -> sqlite3.Connection:
-    """Create a fresh database connection for background tasks."""
-    import os
+You receive:
+1. USER INPUTS — manually entered data (highest priority)
+2. DOCUMENT EXTRACTS — raw text from uploaded documents
+3. Your task: reconcile all data into structured fields
 
-    os.makedirs(os.path.dirname(settings.DATABASE_PATH), exist_ok=True)
-    conn = sqlite3.connect(settings.DATABASE_PATH, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.row_factory = sqlite3.Row
-    return conn
+RULES:
+- User Input > Extracted Data > AI Estimated
+- For each field, output: value, source, confidence (0.0-1.0), reasoning
+- If a field has conflicting values, prefer user input, then document extract
+- If data is missing from both sources, you may estimate ONLY if you have strong contextual evidence; otherwise leave null
+- All monetary values in DKK thousands
+- All areas in sqm
+- Be conservative — use ONLY provided data where possible
+- Do NOT guess or fabricate data
+"""
 
 
-# ---------------------------------------------------------------------------
-# Main reconciliation function
-# ---------------------------------------------------------------------------
-
-async def reconcile(
-    project_id: str,
-    db: sqlite3.Connection | None = None,
-) -> ReconciliationResult:
-    """Merge manual inputs, extracted document data, and AI estimates."""
-
-    own_db = db is None
-    if own_db:
-        db = _get_db()
+def reconcile_project(project_id: str) -> dict:
+    """Run reconciliation for a project. Called as background task."""
+    db = sqlite3.connect(settings.DATABASE_PATH)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA foreign_keys=ON")
+    db.execute("PRAGMA busy_timeout=5000")
 
     try:
-        # 1. Load project_inputs grouped by input_type
-        rows = db.execute(
-            "SELECT input_type, data FROM project_inputs WHERE project_id = ?",
+        # Load user inputs
+        inputs = db.execute(
+            "SELECT input_type, data FROM project_inputs WHERE project_id = ? AND input_type != 'reconciled'",
             (project_id,),
         ).fetchall()
 
-        inputs_by_type: dict[str, list[dict]] = {}
-        for row in rows:
-            input_type = row["input_type"]
-            data = json.loads(row["data"])
-            inputs_by_type.setdefault(input_type, []).append(data)
+        user_data = {}
+        for row in inputs:
+            user_data[row["input_type"]] = json.loads(row["data"])
 
-        # 2. Load parsed documents
+        # Load parsed documents
         docs = db.execute(
-            "SELECT original_filename, parsed_data FROM documents "
-            "WHERE project_id = ? AND parse_status = 'parsed'",
+            "SELECT original_filename, raw_text FROM documents WHERE project_id = ? AND parse_status = 'parsed'",
             (project_id,),
         ).fetchall()
 
-        extracted: list[dict] = []
+        doc_texts = []
         for doc in docs:
-            if doc["parsed_data"]:
-                extracted.append({
-                    "filename": doc["original_filename"],
-                    "data": json.loads(doc["parsed_data"]),
-                })
+            if doc["raw_text"]:
+                doc_texts.append(f"--- {doc['original_filename']} ---\n{doc['raw_text'][:20000]}")
 
-        # 3. Build context string
-        project = db.execute(
-            "SELECT address FROM projects WHERE id = ?",
-            (project_id,),
-        ).fetchone()
-        address_hint = project["address"] if project and project["address"] else "this property"
+        # Build context
+        context_parts = ["=== USER INPUTS ==="]
+        for input_type, data in user_data.items():
+            context_parts.append(f"\n[{input_type.upper()}]\n{json.dumps(data, indent=2)}")
 
-        context_parts = [
-            "PROJECT INPUTS (entered manually by the user — treat as USER INPUT):",
-        ]
-        for itype in ("property", "financial", "planning", "rent_roll"):
-            if itype in inputs_by_type:
-                context_parts.append(
-                    f"  {itype.replace('_', ' ').title()}: "
-                    f"{json.dumps(inputs_by_type[itype], ensure_ascii=False)}"
-                )
-
-        context_parts.append("\nEXTRACTED FROM DOCUMENTS:")
-        if extracted:
-            for item in extracted:
-                context_parts.append(
-                    f"  From {item['filename']}: "
-                    f"{json.dumps(item['data'], ensure_ascii=False)}"
-                )
+        context_parts.append("\n\n=== DOCUMENT EXTRACTS ===")
+        if doc_texts:
+            context_parts.append("\n\n".join(doc_texts))
         else:
-            context_parts.append("  (no parsed documents available)")
+            context_parts.append("No documents uploaded.")
 
-        context_parts.append(
-            "\nRULES:\n"
-            "- User input always overrides extracted data\n"
-            "- Extracted data always overrides AI estimates\n"
-            "- For missing fields, provide your best estimate for a Danish "
-            f"commercial real estate property at {address_hint}\n"
-            "- For AI estimates, explain your reasoning\n"
-            "- Confidence: 1.0=certain, 0.8=high, 0.6=medium, 0.4=low"
-        )
+        user_message = "\n".join(context_parts)
 
-        context = "\n".join(context_parts)
+        # Call LLM
+        llm = LLMClient()
+        result = llm.parse(SYSTEM_PROMPT, user_message, ReconciliationResult)
 
-        # 4. Call LLM
-        result: ReconciliationResult = llm.parse(
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior real estate analyst reconciling "
-                        "property data from multiple sources for a Danish "
-                        "commercial real estate due diligence. Follow the "
-                        "rules exactly."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"{context}\n\n"
-                        "Reconcile all data and return a complete ReconciliationResult."
-                    ),
-                },
-            ],
-            response_model=ReconciliationResult,
-            temperature=0,
-        )
+        # Store reconciled data
+        from ..inputs.service import upsert_input
+        upsert_input(db, project_id, "reconciled", result.model_dump(), source="reconciler")
 
-        # 5. Save result to project_inputs
-        result_json = json.dumps(result.model_dump(), ensure_ascii=False)
+        return result.model_dump()
 
-        # Upsert: delete any prior reconciled row, then insert fresh
-        db.execute(
-            "DELETE FROM project_inputs "
-            "WHERE project_id = ? AND input_type = 'reconciled'",
-            (project_id,),
-        )
-        db.execute(
-            "INSERT INTO project_inputs (id, project_id, input_type, data, source) "
-            "VALUES (?, ?, 'reconciled', ?, 'agent')",
-            (str(uuid.uuid4()), project_id, result_json),
-        )
-        db.commit()
-
-        logger.info("Reconciliation complete for project %s", project_id)
-        return result
-
-    except Exception:
-        logger.exception("Reconciliation failed for project %s", project_id)
-        raise
     finally:
-        if own_db:
-            db.close()
+        db.close()

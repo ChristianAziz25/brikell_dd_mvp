@@ -1,43 +1,40 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import Sidebar from './components/Sidebar';
-import ProjectList from './features/projects/ProjectList';
-import ProjectCreate from './features/projects/ProjectCreate';
-import ProjectDetail, { OverviewTab, PlaceholderTab } from './features/projects/ProjectDetail';
-import DocumentsTab from './features/workflow/DocumentsTab';
-import InputsTab from './features/workflow/InputsTab';
-import VaultView from './features/vault/VaultView';
-import AIAssistant from './features/chat/AIAssistant';
-
-function Layout() {
-  return (
-    <div style={{ display: 'flex', height: '100%' }}>
-      <Sidebar />
-      <main style={{ flex: 1, overflowY: 'auto', padding: 24, background: '#FFFFFF' }}>
-        <Routes>
-          <Route path="/" element={<Navigate to="/projects" replace />} />
-          <Route path="/projects" element={<ProjectList />} />
-          <Route path="/projects/new" element={<ProjectCreate />} />
-          <Route path="/projects/:id" element={<ProjectDetail />}>
-            <Route index element={<Navigate to="overview" replace />} />
-            <Route path="overview" element={<OverviewTab />} />
-            <Route path="documents" element={<DocumentsTab />} />
-            <Route path="inputs" element={<InputsTab />} />
-            <Route path="modules" element={<PlaceholderTab />} />
-            <Route path="review" element={<PlaceholderTab />} />
-            <Route path="report" element={<PlaceholderTab />} />
-          </Route>
-          <Route path="/vault" element={<VaultView />} />
-          <Route path="/chat" element={<AIAssistant />} />
-        </Routes>
-      </main>
-    </div>
-  );
-}
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import Sidebar from "./components/Sidebar";
+import ProjectDetail from "./features/projects/ProjectDetail";
+import DocumentsTab from "./features/workflow/DocumentsTab";
+import InputsTab from "./features/workflow/InputsTab";
+import ModulesTab from "./features/workflow/ModulesTab";
+import ReviewTab from "./features/workflow/ReviewTab";
+import ReportTab from "./features/workflow/ReportTab";
+import ProjectCreate from "./features/projects/ProjectCreate";
+import VaultView from "./features/vault/VaultView";
+import VaultDocuments from "./features/vault/VaultDocuments";
+import AIAssistant from "./features/chat/AIAssistant";
 
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout />
+      <div className="flex h-screen bg-white">
+        <Sidebar />
+        <main className="flex-1 overflow-auto bg-white p-8">
+          <Routes>
+            <Route path="/" element={<Navigate to="/new" replace />} />
+            <Route path="/new" element={<ProjectCreate />} />
+            <Route path="/projects" element={<Navigate to="/new" replace />} />
+            <Route path="/projects/:id" element={<ProjectDetail />}>
+              <Route index element={<Navigate to="documents" replace />} />
+              <Route path="documents" element={<DocumentsTab />} />
+              <Route path="inputs" element={<InputsTab />} />
+              <Route path="modules" element={<ModulesTab />} />
+              <Route path="review" element={<ReviewTab />} />
+              <Route path="report" element={<ReportTab />} />
+            </Route>
+            <Route path="/vault" element={<VaultView />} />
+            <Route path="/vault/:id/documents" element={<VaultDocuments />} />
+            <Route path="/chat" element={<AIAssistant />} />
+          </Routes>
+        </main>
+      </div>
     </BrowserRouter>
   );
 }

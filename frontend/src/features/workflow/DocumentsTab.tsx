@@ -1,145 +1,167 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
-import FileUpload from '../../components/FileUpload';
-import { getDocuments, deleteDocument, downloadDocumentUrl } from '../../api/client';
+import { useEffect, useState } from "react";
+import { useProjectContext } from "@/features/projects/ProjectDetail";
+import {
+  getDocuments,
+  deleteDocument,
+  downloadDocumentUrl,
+  updateDocumentType,
+} from "@/api/client";
+import FileUpload from "@/components/FileUpload";
+import MissingDocsChecklist from "@/components/MissingDocsChecklist";
+import { Download, Trash2, FileText } from "lucide-react";
 
-interface Document {
-  id: string;
-  filename: string;
-  file_type: string;
-  file_size_bytes: number;
-  status: string;
-  uploaded_at: string;
-}
+const DOC_TYPES = [
+  { value: "", label: "Select type..." },
+  { value: "bbr_extract", label: "BBR Extract" },
+  { value: "floor_plans", label: "Floor Plans" },
+  { value: "energy_certificate", label: "Energy Certificate" },
+  { value: "lokalplan", label: "Lokalplan" },
+  { value: "kommuneplan", label: "Kommuneplan" },
+  { value: "occupation_permit", label: "Occupation Permit" },
+  { value: "building_permit", label: "Building Permit" },
+  { value: "rent_roll", label: "Rent Roll" },
+  { value: "lease_agreements", label: "Lease Agreements" },
+  { value: "financial_model", label: "Financial Model" },
+  { value: "valuation_report", label: "Valuation Report" },
+  { value: "dgnb_certificate", label: "DGNB Certificate" },
+  { value: "environmental_report", label: "Environmental Report" },
+  { value: "title_deed", label: "Title Deed" },
+  { value: "cadastral_map", label: "Cadastral Map" },
+  { value: "market_report", label: "Market Report" },
+  { value: "structural_survey", label: "Structural Survey" },
+  { value: "insurance_policy", label: "Insurance Policy" },
+  { value: "tax_assessment", label: "Tax Assessment" },
+  { value: "ownership_structure", label: "Ownership Structure" },
+];
 
-const statusBadge: Record<string, { bg: string; text: string }> = {
-  pending: { bg: '#E0E0E0', text: '#555' },
-  parsing: { bg: '#CCE5FF', text: '#004085' },
-  parsed: { bg: '#D4EDDA', text: '#155724' },
-  failed: { bg: '#F8D7DA', text: '#721C24' },
+const STATUS_COLORS: Record<string, string> = {
+  pending:  "bg-gray-100 text-gray-500",
+  parsing:  "bg-gray-100 text-gray-600",
+  parsed:   "bg-gray-800 text-white",
+  failed:   "bg-red-50 text-red-500",
 };
 
-function formatSize(bytes: number): string {
+function formatSize(bytes: number | null): string {
+  if (!bytes) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function DocumentsTab() {
-  const { id: projectId } = useParams<{ id: string }>();
-  const [docs, setDocs] = useState<Document[]>([]);
+  const { project } = useProjectContext();
+  const [docs, setDocs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchDocs = useCallback(() => {
-    if (!projectId) return;
+  const load = () => {
     setLoading(true);
-    getDocuments(projectId)
+    getDocuments(project.id)
       .then(setDocs)
-      .catch(() => setDocs([]))
-      .finally(() => setLoading(false));
-  }, [projectId]);
+      .finally(() => {
+        setLoading(false);
+        window.dispatchEvent(new Event("dd-docs-changed"));
+      });
+  };
 
-  useEffect(fetchDocs, [fetchDocs]);
+  useEffect(() => {
+    load();
+  }, [project.id]);
 
-  async function handleDelete(doc: Document) {
-    if (!confirm(`Delete "${doc.filename}"?`)) return;
-    try {
-      await deleteDocument(doc.id);
-      fetchDocs();
-    } catch {
-      // silently fail — user can retry
-    }
-  }
+  const handleDelete = async (id: string) => {
+    await deleteDocument(id);
+    load();
+  };
 
-  function handleDownload(doc: Document) {
-    window.open(downloadDocumentUrl(doc.id), '_blank');
-  }
-
-  if (!projectId) return null;
+  const handleTypeChange = async (docId: string, type: string) => {
+    if (!type) return;
+    await updateDocumentType(docId, type);
+    load();
+  };
 
   return (
     <div>
-      <FileUpload projectId={projectId} onUploadComplete={fetchDocs} />
-
-      <h3 style={{ color: '#1A2B3C', fontSize: 17, marginBottom: 12, marginTop: 8 }}>Uploaded Documents</h3>
+      <FileUpload projectId={project.id} onUploaded={load} />
 
       {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
-          <div style={{ width: 28, height: 28, border: '3px solid #E0E0E0', borderTopColor: '#C9A84C', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <div className="flex justify-center py-8">
+          <div className="animate-spin rounded-full h-6 w-6 border-2 border-gray-200 border-t-gray-600" />
         </div>
       ) : docs.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '48px 0', color: '#999', fontSize: 15 }}>
-          No documents uploaded yet
+        <div className="text-center py-12 text-gray-400">
+          <FileText size={40} className="mx-auto mb-3 opacity-50" />
+          <p>No documents uploaded yet</p>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', background: '#fff', borderRadius: 10, overflow: 'hidden', border: '1px solid #E0E0E0' }}>
+        <div className="bg-white rounded-lg border border-gray-100 overflow-hidden mt-6">
+          <table className="w-full text-sm">
             <thead>
-              <tr style={{ background: '#FAFAFA', borderBottom: '1px solid #E0E0E0' }}>
-                {['Filename', 'Type', 'Size', 'Status', 'Uploaded', '', ''].map((h, i) => (
-                  <th key={i} style={{ padding: '10px 14px', fontSize: 12, fontWeight: 600, color: '#888', textAlign: 'left', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    {h}
-                  </th>
-                ))}
+              <tr className="border-b border-gray-100 text-left">
+                <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide">Filename</th>
+                <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide">Type</th>
+                <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide">Document Category</th>
+                <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide">Size</th>
+                <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide">Status</th>
+                <th className="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide w-24">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {docs.map((doc) => {
-                const badge = statusBadge[doc.status] ?? statusBadge.pending;
-                return (
-                  <tr key={doc.id} style={{ borderBottom: '1px solid #F0F0F0' }}>
-                    <td style={cellStyle}>
-                      <span style={{ fontWeight: 500, color: '#1A2B3C' }}>{doc.filename}</span>
-                    </td>
-                    <td style={cellStyle}>
-                      <span style={{ fontSize: 13, color: '#666', textTransform: 'uppercase' }}>{doc.file_type}</span>
-                    </td>
-                    <td style={cellStyle}>{formatSize(doc.file_size_bytes)}</td>
-                    <td style={cellStyle}>
-                      <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 10, background: badge.bg, color: badge.text, textTransform: 'capitalize' }}>
-                        {doc.status}
-                      </span>
-                    </td>
-                    <td style={cellStyle}>{new Date(doc.uploaded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                    <td style={{ ...cellStyle, width: 40 }}>
-                      <button onClick={() => handleDownload(doc)} style={iconBtnStyle} title="Download">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M12 5v14m0 0l-4-4m4 4l4-4" />
-                          <path d="M5 19h14" />
-                        </svg>
+              {docs.map((doc) => (
+                <tr key={doc.id} className="border-t border-gray-50 hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-3 text-sm font-normal text-gray-700 truncate max-w-[200px]">
+                    {doc.original_filename}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-400 uppercase tracking-wide">
+                    {doc.file_type}
+                  </td>
+                  <td className="px-4 py-3">
+                    <select
+                      value={doc.document_type || ""}
+                      onChange={(e) => handleTypeChange(doc.id, e.target.value)}
+                      className="text-xs border border-gray-200 rounded px-2 py-1 bg-white text-gray-600 outline-none focus:border-gray-400"
+                    >
+                      {DOC_TYPES.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-400">
+                    {formatSize(doc.file_size_bytes)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[doc.parse_status] || ""}`}
+                    >
+                      {doc.parse_status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-2">
+                      <a
+                        href={downloadDocumentUrl(doc.id)}
+                        className="text-gray-300 hover:text-gray-600 transition-colors"
+                        title="Download"
+                      >
+                        <Download size={16} />
+                      </a>
+                      <button
+                        onClick={() => handleDelete(doc.id)}
+                        className="text-gray-300 hover:text-red-400 transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 size={16} />
                       </button>
-                    </td>
-                    <td style={{ ...cellStyle, width: 40 }}>
-                      <button onClick={() => handleDelete(doc)} style={iconBtnStyle} title="Delete">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C0614A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
-                        </svg>
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
+
+      <MissingDocsChecklist projectId={project.id} />
     </div>
   );
 }
-
-const cellStyle: React.CSSProperties = {
-  padding: '10px 14px',
-  fontSize: 14,
-  color: '#555',
-};
-
-const iconBtnStyle: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  cursor: 'pointer',
-  padding: 4,
-  borderRadius: 4,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-};

@@ -1,20 +1,36 @@
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+@import "tailwindcss";
+
+@theme {
+  --color-navy: #1A2B3C;
+  --color-navy-light: #243647;
+  --color-gold: #C9A84C;
+  --color-gold-light: #D4BA6A;
+  --color-error: #C0614A;
+  --color-success: #4CAF50;
+  --color-warning: #FF9800;
+  --radius-lg: 0.5rem;
+  --radius-md: calc(var(--radius-lg) - 2px);
+  --radius-sm: calc(var(--radius-lg) - 4px);
 }
 
 body {
-  font-family: 'Inter', system-ui, sans-serif;
-  background: #FFFFFF;
+  margin: 0;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #ffffff;
+  color: #374151;
 }
 
-html,
-body,
-#root {
-  height: 100%;
+* {
+  box-sizing: border-box;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+h1, h2, h3, h4, h5, h6 {
+  color: #111827;
+  font-weight: 500;
+}
+
+input, select, textarea {
+  font-family: inherit;
 }

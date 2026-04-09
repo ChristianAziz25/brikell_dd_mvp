@@ -1,30 +1,27 @@
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 import sqlite3
 
-from fastapi import APIRouter, Depends, status
+from ..database import get_db
+from .schemas import InputSave
+from . import service
 
-from app.database import get_db
-from app.inputs.schemas import InputData, InputResponse
-from app.inputs.service import get_inputs, upsert_input
-
-router = APIRouter(tags=["inputs"])
+router = APIRouter()
 
 
-@router.post(
-    "/projects/{project_id}/inputs",
-    response_model=InputResponse,
-    status_code=status.HTTP_200_OK,
-)
-def save_input(
-    project_id: str,
-    body: InputData,
-    db: sqlite3.Connection = Depends(get_db),
-):
-    return upsert_input(project_id, body.input_type, body.data, source="manual", db=db)
+@router.post("/{project_id}/inputs")
+def save_input(project_id: str, body: InputSave, db: sqlite3.Connection = Depends(get_db)):
+    if body.input_type not in service.VALID_INPUT_TYPES:
+        raise HTTPException(400, f"Invalid input_type: {body.input_type}")
+    return service.upsert_input(db, project_id, body.input_type, body.data)
 
 
-@router.get("/projects/{project_id}/inputs")
-def list_inputs(
-    project_id: str,
-    db: sqlite3.Connection = Depends(get_db),
-):
-    return get_inputs(project_id, db)
+@router.get("/{project_id}/inputs")
+def get_inputs(project_id: str, db: sqlite3.Connection = Depends(get_db)):
+    return service.get_inputs(db, project_id)
+
+
+@router.post("/{project_id}/reconcile")
+def reconcile(project_id: str, background_tasks: BackgroundTasks):
+    from ..agents.reconciler import reconcile_project
+    background_tasks.add_task(reconcile_project, project_id)
+    return {"status": "reconciliation_started"}

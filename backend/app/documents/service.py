@@ -1,70 +1,61 @@
-import os
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-
-from fastapi import HTTPException
-
-from app.documents.schemas import DocumentResponse
-
-VAULT_ROOT = Path("/Users/christianaziz/projects/vault")
 
 
 def save_document(
+    db: sqlite3.Connection,
     project_id: str,
-    file_bytes: bytes,
     original_filename: str,
     file_type: str,
-    file_size_bytes: int,
-    db: sqlite3.Connection,
-) -> DocumentResponse:
-    upload_dir = VAULT_ROOT / project_id / "uploads"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
+    file_size: int,
+    file_bytes: bytes,
+) -> dict:
     doc_id = str(uuid.uuid4())
-    filename = f"{doc_id}_{original_filename}"
-    vault_path = str(upload_dir / filename)
+    now = datetime.now(timezone.utc).isoformat()
+    vault_dir = Path("vault") / project_id / "uploads"
+    vault_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{doc_id}_{original_filename}"
+    vault_path = str(vault_dir / safe_name)
+    Path(vault_path).write_bytes(file_bytes)
 
-    with open(vault_path, "wb") as f:
-        f.write(file_bytes)
-
-    now = datetime.now().isoformat()
     db.execute(
         """INSERT INTO documents
-           (id, project_id, filename, original_filename, file_type,
-            file_size_bytes, vault_path, parse_status, uploaded_at)
+           (id, project_id, filename, original_filename, file_type, file_size_bytes, vault_path, parse_status, uploaded_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
-        (doc_id, project_id, filename, original_filename, file_type,
-         file_size_bytes, vault_path, now),
+        (doc_id, project_id, safe_name, original_filename, file_type, file_size, vault_path, now),
     )
     db.commit()
-    return get_document(doc_id, db)
+    return dict(db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone())
 
 
-def get_documents(
-    project_id: str, db: sqlite3.Connection
-) -> list[DocumentResponse]:
+def list_documents(db: sqlite3.Connection, project_id: str) -> list[dict]:
     rows = db.execute(
         "SELECT * FROM documents WHERE project_id = ? ORDER BY uploaded_at DESC",
         (project_id,),
     ).fetchall()
-    return [DocumentResponse(**dict(row)) for row in rows]
+    return [dict(r) for r in rows]
 
 
-def get_document(doc_id: str, db: sqlite3.Connection) -> DocumentResponse:
-    row = db.execute(
-        "SELECT * FROM documents WHERE id = ?", (doc_id,)
-    ).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return DocumentResponse(**dict(row))
+def get_document(db: sqlite3.Connection, doc_id: str) -> dict | None:
+    row = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+    return dict(row) if row else None
 
 
-def delete_document(doc_id: str, db: sqlite3.Connection) -> dict:
-    doc = get_document(doc_id, db)
-    if os.path.exists(doc.vault_path):
-        os.remove(doc.vault_path)
+def update_document_type(db: sqlite3.Connection, doc_id: str, document_type: str) -> dict | None:
+    db.execute("UPDATE documents SET document_type = ? WHERE id = ?", (document_type, doc_id))
+    db.commit()
+    return get_document(db, doc_id)
+
+
+def delete_document(db: sqlite3.Connection, doc_id: str) -> bool:
+    doc = get_document(db, doc_id)
+    if not doc:
+        return False
+    path = Path(doc["vault_path"])
+    if path.exists():
+        path.unlink()
     db.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
     db.commit()
-    return {"deleted": True}
+    return True

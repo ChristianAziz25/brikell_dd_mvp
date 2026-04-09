@@ -1,149 +1,116 @@
-import { useRef, useState, useCallback, type DragEvent, type ChangeEvent } from 'react';
+import { useState, useRef, useCallback } from "react";
+import { Upload, X } from "lucide-react";
 
-const ACCEPTED = '.pdf,.csv,.docx,.xlsx,.xls,.txt';
-const ACCEPT_SET = new Set(['pdf', 'csv', 'docx', 'xlsx', 'xls', 'txt']);
+interface Props {
+  projectId: string;
+  onUploaded: () => void;
+}
 
-interface FileEntry {
-  file: File;
+interface UploadingFile {
+  name: string;
   progress: number;
-  status: 'uploading' | 'done' | 'error';
   error?: string;
 }
 
-interface FileUploadProps {
-  projectId: string;
-  onUploadComplete: () => void;
-}
+const ACCEPTED = ".pdf,.docx,.csv,.xlsx,.xls,.txt";
 
-export default function FileUpload({ projectId, onUploadComplete }: FileUploadProps) {
-  const [dragOver, setDragOver] = useState(false);
-  const [entries, setEntries] = useState<FileEntry[]>([]);
+export default function FileUpload({ projectId, onUploaded }: Props) {
+  const [uploading, setUploading] = useState<UploadingFile[]>([]);
+  const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const pendingRef = useRef(0);
 
-  const uploadFile = useCallback((file: File, index: number) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/api/v1/projects/${projectId}/documents`);
+  const upload = useCallback(
+    (files: FileList) => {
+      const items: UploadingFile[] = Array.from(files).map((f) => ({
+        name: f.name,
+        progress: 0,
+      }));
+      setUploading(items);
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
-        setEntries((prev) => prev.map((en, i) => i === index ? { ...en, progress: pct } : en));
-      }
-    };
+      const formData = new FormData();
+      Array.from(files).forEach((f) => formData.append("files", f));
 
-    xhr.onload = () => {
-      const ok = xhr.status >= 200 && xhr.status < 300;
-      setEntries((prev) => prev.map((en, i) =>
-        i === index ? { ...en, status: ok ? 'done' : 'error', progress: ok ? 100 : en.progress, error: ok ? undefined : `${xhr.status} ${xhr.statusText}` } : en
-      ));
-      pendingRef.current--;
-      if (pendingRef.current === 0) onUploadComplete();
-    };
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          setUploading((prev) => prev.map((f) => ({ ...f, progress: pct })));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setUploading([]);
+          onUploaded();
+        } else {
+          setUploading((prev) =>
+            prev.map((f) => ({ ...f, error: "Upload failed" }))
+          );
+        }
+      };
+      xhr.onerror = () => {
+        setUploading((prev) =>
+          prev.map((f) => ({ ...f, error: "Network error" }))
+        );
+      };
+      xhr.open("POST", `/api/v1/projects/${projectId}/documents`);
+      xhr.send(formData);
+    },
+    [projectId, onUploaded]
+  );
 
-    xhr.onerror = () => {
-      setEntries((prev) => prev.map((en, i) =>
-        i === index ? { ...en, status: 'error', error: 'Network error' } : en
-      ));
-      pendingRef.current--;
-      if (pendingRef.current === 0) onUploadComplete();
-    };
-
-    const fd = new FormData();
-    fd.append('files', file);
-    xhr.send(fd);
-  }, [projectId, onUploadComplete]);
-
-  const processFiles = useCallback((files: FileList | File[]) => {
-    const valid = Array.from(files).filter((f) => {
-      const ext = f.name.split('.').pop()?.toLowerCase() ?? '';
-      return ACCEPT_SET.has(ext);
-    });
-    if (valid.length === 0) return;
-
-    const startIndex = entries.length;
-    const newEntries: FileEntry[] = valid.map((file) => ({ file, progress: 0, status: 'uploading' }));
-    setEntries((prev) => [...prev, ...newEntries]);
-    pendingRef.current += valid.length;
-    valid.forEach((file, i) => uploadFile(file, startIndex + i));
-  }, [entries.length, uploadFile]);
-
-  const onDrop = useCallback((e: DragEvent) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    setDragOver(false);
-    processFiles(e.dataTransfer.files);
-  }, [processFiles]);
-
-  const onFileChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) processFiles(e.target.files);
-    e.target.value = '';
-  }, [processFiles]);
-
-  function formatSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
+    setDragging(false);
+    if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
+  };
 
   return (
-    <div>
-      {/* Drop zone */}
+    <div className="mb-6">
       <div
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        style={{
-          border: `2px dashed ${dragOver ? '#C9A84C' : '#CCC'}`,
-          borderRadius: 10,
-          padding: '40px 20px',
-          textAlign: 'center',
-          cursor: 'pointer',
-          background: dragOver ? '#FDF8EC' : '#FAFAFA',
-          transition: 'border-color 0.2s, background 0.2s',
-          marginBottom: 20,
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
         }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current?.click()}
+        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+          dragging
+            ? "border-gold bg-gold/5"
+            : "border-gray-300 hover:border-gold/50"
+        }`}
       >
-        {/* Cloud icon */}
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={dragOver ? '#C9A84C' : '#AAA'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12 }}>
-          <path d="M12 16V8m0 0l-3 3m3-3l3 3" />
-          <path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25" />
-        </svg>
-        <div style={{ color: '#666', fontSize: 15 }}>Drag files here or click to browse</div>
-        <div style={{ color: '#AAA', fontSize: 13, marginTop: 4 }}>PDF, CSV, DOCX, XLSX, XLS, TXT</div>
-        <input ref={inputRef} type="file" accept={ACCEPTED} multiple onChange={onFileChange} style={{ display: 'none' }} />
+        <Upload size={32} className="mx-auto mb-3 text-gray-400" />
+        <p className="text-sm text-gray-600">
+          Drag & drop files here, or <span className="text-gold font-medium">browse</span>
+        </p>
+        <p className="text-xs text-gray-400 mt-1">
+          PDF, DOCX, CSV, XLSX, TXT
+        </p>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept={ACCEPTED}
+          onChange={(e) => e.target.files && upload(e.target.files)}
+          className="hidden"
+        />
       </div>
 
-      {/* File list */}
-      {entries.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {entries.map((entry, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#fff', border: '1px solid #E0E0E0', borderRadius: 8, padding: '10px 14px' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 500, color: '#1A2B3C', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {entry.file.name}
+      {uploading.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {uploading.map((f, i) => (
+            <div key={i} className="flex items-center gap-3 text-sm">
+              <span className="truncate flex-1">{f.name}</span>
+              {f.error ? (
+                <span className="text-error text-xs">{f.error}</span>
+              ) : (
+                <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gold transition-all"
+                    style={{ width: `${f.progress}%` }}
+                  />
                 </div>
-                <div style={{ fontSize: 12, color: '#999' }}>{formatSize(entry.file.size)}</div>
-              </div>
-              {/* Progress bar */}
-              <div style={{ width: 120, height: 6, background: '#E0E0E0', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%',
-                  borderRadius: 3,
-                  width: `${entry.progress}%`,
-                  background: entry.status === 'error' ? '#C0614A' : entry.status === 'done' ? '#4CAF50' : '#C9A84C',
-                  transition: 'width 0.2s',
-                }} />
-              </div>
-              {/* Status icon */}
-              {entry.status === 'done' && (
-                <svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="10" fill="#4CAF50" /><path d="M6 10l3 3 5-6" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              )}
-              {entry.status === 'error' && (
-                <svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="10" fill="#C0614A" /><path d="M7 7l6 6M13 7l-6 6" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
-              )}
-              {entry.status === 'uploading' && (
-                <div style={{ width: 20, height: 20, border: '2px solid #E0E0E0', borderTopColor: '#C9A84C', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
               )}
             </div>
           ))}

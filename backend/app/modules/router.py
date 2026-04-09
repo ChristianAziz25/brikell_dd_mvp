@@ -1,119 +1,57 @@
 import json
 import sqlite3
-import uuid
-from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends
 
-from app.agents.module_runner import run_modules_background
-from app.database import get_db
-from app.modules.definitions import MODULE_CONFIGS
+from ..database import get_db
+from ..agents.module_runner import run_all_modules
+from .definitions import MODULE_CONFIGS
 
-router = APIRouter(tags=["modules"])
+router = APIRouter()
 
 
-@router.post("/projects/{project_id}/run-modules")
-def run_modules(
-    project_id: str,
-    background_tasks: BackgroundTasks,
-    db: sqlite3.Connection = Depends(get_db),
-):
-    # Verify project exists
-    project = db.execute(
-        "SELECT id FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # Create pending rows for all 20 modules (INSERT OR IGNORE preserves existing)
-    now = datetime.now().isoformat()
-    for module in MODULE_CONFIGS:
-        db.execute(
-            "INSERT OR IGNORE INTO module_outputs "
-            "(id, project_id, module_key, module_number, status, created_at) "
-            "VALUES (?, ?, ?, ?, 'pending', ?)",
-            (str(uuid.uuid4()), project_id, module.key, module.number, now),
-        )
-    db.execute(
-        "UPDATE projects SET status = 'running', updated_at = ? WHERE id = ?",
-        (now, project_id),
-    )
-    db.commit()
-
-    # Start background task
-    background_tasks.add_task(run_modules_background, project_id)
-
-    return {
-        "status": "running",
-        "message": "Module chain started",
-        "total_modules": 20,
-    }
+@router.post("/{project_id}/run-modules")
+def start_modules(project_id: str, background_tasks: BackgroundTasks):
+    background_tasks.add_task(run_all_modules, project_id)
+    return {"status": "modules_started", "total": len(MODULE_CONFIGS)}
 
 
-@router.get("/projects/{project_id}/modules")
-def list_modules(
-    project_id: str,
-    db: sqlite3.Connection = Depends(get_db),
-):
-    project = db.execute(
-        "SELECT id FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
+@router.get("/{project_id}/modules")
+def list_modules(project_id: str, db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute(
-        "SELECT * FROM module_outputs "
-        "WHERE project_id = ? ORDER BY module_number",
+        "SELECT * FROM module_outputs WHERE project_id = ? ORDER BY module_number",
         (project_id,),
     ).fetchall()
 
-    modules = []
+    results = []
     for row in rows:
-        module = dict(row)
-        # Parse JSON fields
-        for field in ("output_data", "key_metrics", "risk_flags"):
-            if module.get(field):
-                try:
-                    module[field] = json.loads(module[field])
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        modules.append(module)
+        r = dict(row)
+        if r["output_data"]:
+            r["output_data"] = json.loads(r["output_data"])
+        if r["key_metrics"]:
+            r["key_metrics"] = json.loads(r["key_metrics"])
+        if r["risk_flags"]:
+            r["risk_flags"] = json.loads(r["risk_flags"])
+        results.append(r)
 
-    return modules
+    return results
 
 
-@router.get("/projects/{project_id}/modules/progress")
-def module_progress(
-    project_id: str,
-    db: sqlite3.Connection = Depends(get_db),
-):
-    project = db.execute(
-        "SELECT id FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
+@router.get("/{project_id}/modules/progress")
+def module_progress(project_id: str, db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute(
-        "SELECT module_key, module_number, status FROM module_outputs "
-        "WHERE project_id = ? ORDER BY module_number",
+        "SELECT status, COUNT(*) as cnt FROM module_outputs WHERE project_id = ? GROUP BY status",
         (project_id,),
     ).fetchall()
 
-    counts = {"complete": 0, "running": 0, "failed": 0, "pending": 0}
-    current_module = None
-
-    for row in rows:
-        s = row["status"]
-        if s in counts:
-            counts[s] += 1
-        if s == "running":
-            current_module = row["module_key"]
+    counts = {r["status"]: r["cnt"] for r in rows}
+    total = len(MODULE_CONFIGS)
+    tracked = sum(counts.values())
 
     return {
-        "total": 20,
-        "complete": counts["complete"],
-        "running": counts["running"],
-        "failed": counts["failed"],
-        "pending": counts["pending"],
-        "current_module": current_module,
+        "total": total,
+        "pending": total - tracked + counts.get("pending", 0),
+        "running": counts.get("running", 0),
+        "complete": counts.get("complete", 0),
+        "failed": counts.get("failed", 0),
     }

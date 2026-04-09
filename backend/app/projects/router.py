@@ -1,83 +1,91 @@
+import json
+
+from fastapi import APIRouter, Depends, HTTPException
 import sqlite3
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from ..database import get_db
+from .schemas import ProjectCreate, ProjectUpdate, ProjectResponse
+from . import service
 
-from app.agents.reconciler import reconcile
-from app.config import settings
-from app.database import get_db
-from app.projects.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
-from app.projects.service import (
-    create_project,
-    delete_project,
-    get_project,
-    list_projects,
-    update_project,
-    update_project_status,
-)
-
-router = APIRouter(tags=["projects"])
+router = APIRouter()
 
 
-@router.post("/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-def create(data: ProjectCreate, db: sqlite3.Connection = Depends(get_db)):
-    return create_project(data, db)
+@router.post("", response_model=ProjectResponse)
+def create(body: ProjectCreate, db: sqlite3.Connection = Depends(get_db)):
+    return service.create_project(db, body.name, body.address)
 
 
-@router.get("/projects", response_model=list[ProjectResponse])
+@router.get("", response_model=list[ProjectResponse])
 def list_all(db: sqlite3.Connection = Depends(get_db)):
-    return list_projects(db)
+    return service.list_projects(db)
 
 
-@router.get("/projects/{project_id}", response_model=ProjectResponse)
-def get(project_id: str, db: sqlite3.Connection = Depends(get_db)):
-    return get_project(project_id, db)
+@router.get("/{project_id}", response_model=ProjectResponse)
+def get_one(project_id: str, db: sqlite3.Connection = Depends(get_db)):
+    project = service.get_project(db, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return project
 
 
-@router.put("/projects/{project_id}", response_model=ProjectResponse)
-def update(project_id: str, data: ProjectUpdate, db: sqlite3.Connection = Depends(get_db)):
-    return update_project(project_id, data, db)
+@router.put("/{project_id}", response_model=ProjectResponse)
+def update(project_id: str, body: ProjectUpdate, db: sqlite3.Connection = Depends(get_db)):
+    project = service.update_project(db, project_id, **body.model_dump(exclude_unset=True))
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return project
 
 
-@router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{project_id}")
 def delete(project_id: str, db: sqlite3.Connection = Depends(get_db)):
-    delete_project(project_id, db)
+    if not service.delete_project(db, project_id):
+        raise HTTPException(404, "Project not found")
+    return {"ok": True}
 
 
-async def _run_reconcile(project_id: str):
-    conn = sqlite3.connect(settings.DATABASE_PATH, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.row_factory = sqlite3.Row
-    try:
-        await reconcile(project_id, conn)
-    finally:
-        conn.close()
-
-
-@router.post("/projects/{project_id}/reconcile")
-async def reconcile_project(
-    project_id: str,
-    background_tasks: BackgroundTasks,
-    db: sqlite3.Connection = Depends(get_db),
-):
-    update_project_status(project_id, "reconciling", db)
-    background_tasks.add_task(_run_reconcile, project_id)
-    return {"status": "reconciling", "message": "Reconciliation started"}
-
-
-@router.get("/projects/{project_id}/reconciled")
-def get_reconciled(project_id: str, db: sqlite3.Connection = Depends(get_db)):
-    import json
-    from fastapi import HTTPException
-
-    get_project(project_id, db)  # 404 if not found
+@router.get("/{project_id}/gaps")
+def get_gaps(project_id: str, db: sqlite3.Connection = Depends(get_db)):
+    """Return the full DD gap report for a project."""
     row = db.execute(
-        "SELECT data FROM project_inputs "
-        "WHERE project_id = ? AND input_type = 'reconciled' "
-        "ORDER BY created_at DESC LIMIT 1",
-        (project_id,),
+        "SELECT dd_gap_report FROM projects WHERE id = ?", (project_id,)
     ).fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="No reconciled data yet")
-    return json.loads(row["data"])
+        raise HTTPException(404, "Project not found")
+    if not row["dd_gap_report"]:
+        return {"ready_to_run": False, "overall_completeness_pct": 0, "message": "No documents uploaded yet."}
+    return json.loads(row["dd_gap_report"])
+
+
+@router.get("/{project_id}/gaps/summary")
+def get_gaps_summary(project_id: str, db: sqlite3.Connection = Depends(get_db)):
+    """Return a simplified gap summary for frontend display."""
+    row = db.execute(
+        "SELECT dd_gap_report FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Project not found")
+    if not row["dd_gap_report"]:
+        return {
+            "completeness_pct": 0,
+            "ready_to_run": False,
+            "sufficient_count": 0,
+            "partial_count": 0,
+            "missing_count": 0,
+            "auto_count": 0,
+            "modules": {},
+            "missing_summary": [],
+            "document_suggestions": [],
+        }
+    report = json.loads(row["dd_gap_report"])
+    modules = report.get("modules", {})
+    return {
+        "completeness_pct": report.get("overall_completeness_pct", 0),
+        "ready_to_run": report.get("ready_to_run", False),
+        "sufficient_count": sum(1 for m in modules.values() if m["status"] == "sufficient"),
+        "partial_count": sum(1 for m in modules.values() if m["status"] == "partial"),
+        "missing_count": sum(1 for m in modules.values() if m["status"] == "missing"),
+        "auto_count": sum(1 for m in modules.values() if m["status"] == "auto"),
+        "modules": modules,
+        "missing_summary": report.get("missing_summary", []),
+        "document_suggestions": report.get("document_suggestions", []),
+    }

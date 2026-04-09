@@ -1,11 +1,9 @@
-import logging
+"""LLM client wrapping OpenAI API with structured output parsing and retry logic."""
 
-from openai import APIConnectionError, OpenAI, RateLimitError
-from tenacity import retry, stop_after_attempt, wait_exponential
+from openai import OpenAI, RateLimitError, APIConnectionError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from app.config import settings
-
-logger = logging.getLogger(__name__)
+from ..config import settings
 
 
 class LLMClient:
@@ -14,45 +12,36 @@ class LLMClient:
         self.model = "gpt-4o"
 
     @retry(
-        wait=wait_exponential(multiplier=1, min=1, max=60),
         stop=stop_after_attempt(3),
-        retry=lambda retry_state: isinstance(
-            retry_state.outcome.exception(), (RateLimitError, APIConnectionError)
-        ),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((RateLimitError, APIConnectionError)),
     )
-    def parse(self, messages, response_model, temperature=0):
-        response = self.client.beta.chat.completions.parse(
+    def parse(self, system_prompt: str, user_message: str, response_format: type) -> object:
+        """Call GPT-4o with structured output parsing via beta API."""
+        completion = self.client.beta.chat.completions.parse(
             model=self.model,
-            messages=messages,
-            response_format=response_model,
-            temperature=temperature,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            response_format=response_format,
         )
-        logger.info(
-            "Module call: %d in, %d out",
-            response.usage.prompt_tokens,
-            response.usage.completion_tokens,
-        )
-        return response.choices[0].message.parsed
+        return completion.choices[0].message.parsed
 
     @retry(
-        wait=wait_exponential(multiplier=1, min=1, max=60),
         stop=stop_after_attempt(3),
-        retry=lambda retry_state: isinstance(
-            retry_state.outcome.exception(), (RateLimitError, APIConnectionError)
-        ),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((RateLimitError, APIConnectionError)),
     )
-    def complete(self, messages, temperature=0):
-        response = self.client.chat.completions.create(
+    def complete(self, system_prompt: str, user_message: str) -> str:
+        """Call GPT-4o for unstructured text response."""
+        completion = self.client.chat.completions.create(
             model=self.model,
-            messages=messages,
-            temperature=temperature,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
         )
-        logger.info(
-            "Module call: %d in, %d out",
-            response.usage.prompt_tokens,
-            response.usage.completion_tokens,
-        )
-        return response.choices[0].message.content
-
-
-llm = LLMClient()
+        return completion.choices[0].message.content or ""
